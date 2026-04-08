@@ -18,12 +18,14 @@ RIGHT_MOTOR_PORT = "D"
 # Gripper motors (one per cube)
 GRIPPER_1_PORT = "B"   # grabs cube 1
 GRIPPER_2_PORT = "C"   # grabs cube 2
+GRIPPER_1_PORT = "D"   
+GRIPPER_2_PORT = "C"   
 
 # Sensors
-GYRO_PORT       = 2    # EV3 Gyro in port S2
-COLOR_PORT      = 1    # EV3 Color in port S3
-ULTRASONIC_PORT = 3    # EV3 Ultrasonic in port S4
-TOUCH_ESTOP_PORT = 4   # Touch sensor for e-stop in port S1
+GYRO_PORT       = 2    
+COLOR_PORT      = 1    
+ULTRASONIC_PORT = 3    
+TOUCH_ESTOP_PORT = 4   
 
 # ═══════════════════════════════════════════════
 #  PHYSICAL DIMENSIONS  (measure on YOUR robot)

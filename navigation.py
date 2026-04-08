@@ -1,19 +1,4 @@
-"""
-navigation.py — Movement primitives and closed-loop controllers.
 
-Provides high-level movement functions that the mission planner calls:
-
-    drive_straight(heading, distance_cm)  — PID-controlled straight drive
-    turn_to(target_heading)               — gyro-PID in-place turn
-    wall_follow_step(prev_error)          — one iteration of wall following
-    stop_motors()                         — immediate motor stop
-    grab(gripper_motor)                   — close gripper and lift
-    release(gripper_motor)                — open gripper to drop cube
-    play_delivery_sound()                 — play sound on delivery
-    play_mission_sound()                  — play sound on mission complete
-
-All functions use sensors.py for filtered readings and config.py for constants.
-"""
 
 import time
 import math
@@ -28,11 +13,6 @@ from sensors import (
 )
 
 
-# ═══════════════════════════════════════════════
-#  SOUNDS
-#  TODO: customize these to your liking.
-#  You can chain sounds with .append() for melodies.
-# ═══════════════════════════════════════════════
 
 _delivery_sound = Sound(
     duration=DELIVERY_SOUND_DURATION,
@@ -45,14 +25,10 @@ _mission_sound = Sound(
     pitch=MISSION_SOUND_PITCH,
     volume=60
 )
-# Example: make the mission sound a two-tone melody
-# _tone2 = Sound(duration=0.5, pitch="C6", volume=60)
-# _mission_sound.append(_tone2, spacing=0.1)
 
 
-# ═══════════════════════════════════════════════
-#  ODOMETRY HELPERS
-# ═══════════════════════════════════════════════
+
+
 
 def _encoder_to_cm(degrees):
     """Convert encoder degrees to centimeters traveled."""
@@ -103,7 +79,10 @@ def drive_straight(heading, distance_cm):
     while abs(get_distance_traveled()) < abs(distance_cm):
         # E-stop check
         if is_estop_pressed():
+            
+            
             stop_motors()
+            
             return False
 
         # PID correction
@@ -143,21 +122,153 @@ def drive_straight(heading, distance_cm):
 #  PID TURNING
 # ═══════════════════════════════════════════════
 
-def turn_to(target_heading):
-    """Turn in place to face the target heading using gyro-PID.
+def turn_to(target_heading, direction=None):
 
-    Returns True if completed, False if interrupted by e-stop.
+    prev_error = 0.0
+    stall_count = 0
+ 
+    while True:
+        if is_estop_pressed():
+            stop_motors()
+            return False
+ 
+        current = get_heading()
+        error = target_heading - current
+ 
+        # Normalize error based on desired direction
+        if direction == "ccw":
+            # Clockwise = negative error (we want error < 0)
+            while error > 0:
+                error -= 360
+            # If we're already past target (error ≈ -360), wrap to near 0
+            while error < -360:
+                error += 360
+        elif direction == "cw":
+            # Counter-clockwise = positive error (we want error > 0)
+            while error < 0:
+                error += 360
+            while error > 360:
+                error -= 360
+        else:
+            # Default: shortest path (-180..180)
+            while error > 180:
+                error -= 360
+            while error < -180:
+                error += 360
+ 
+        # Done?
+        if abs(error) < TURN_TOLERANCE_DEG:
+            break
+ 
+        derivative = error - prev_error
+        power = (TURN_KP * error + TURN_KD * derivative)/2
+ 
+        # Clamp
+        power = max(min(power, TURN_MAX_POWER), -TURN_MAX_POWER)
+ 
+        # Ensure minimum power so the robot actually moves
+        if 0 < power < TURN_MIN_POWER:
+            power = TURN_MIN_POWER
+        elif -TURN_MIN_POWER < power < 0:
+            power = -TURN_MIN_POWER
+ 
+        # Spin in place: left motor backward, right motor forward → clockwise
+        LEFT_MOTOR.set_power(-power)
+        RIGHT_MOTOR.set_power(power)
+ 
+        prev_error = error
+        time.sleep(CONTROL_LOOP_INTERVAL)
+ 
+        # Safety: detect if we're stuck
+        stall_count += 1
+        if stall_count > 500:  # ~10 seconds at 50Hz
+            print("WARNING: turn_to stalled, aborting")
+            break
+ 
+    stop_motors()
+    time.sleep(0.1)  # brief settle time
+    return True
 
-    Args:
-        target_heading: desired heading in degrees
-    """
+
+
+
+# def turn_to(target_heading):
+#     """Turn in place to face the target heading using gyro-PID.
+# 
+#     Returns True if completed, False if interrupted by e-stop.
+# 
+#     Args:
+#         target_heading: desired heading in degrees
+#     """
+#     prev_error = 0.0
+#     stall_count = 0
+# 
+#     while True:
+#         if is_estop_pressed():
+#             stop_motors()
+#             return False
+# 
+#         current = get_heading()
+#         print(current)
+#         error = target_heading - current
+# 
+#         # Normalize error to -180..180
+#         while error > 180:
+#             error -= 360
+#         while error < -180:
+#             error += 360
+# 
+#         # Done?
+#         if abs(error) < TURN_TOLERANCE_DEG:
+#             break
+# 
+#         derivative = error - prev_error
+#         power = (TURN_KP * error + TURN_KD * derivative)/2
+# 
+#         # Clamp
+#         power = max(min(power, TURN_MAX_POWER), -TURN_MAX_POWER)
+# 
+#         # Ensure minimum power so the robot actually moves
+#         if 0 < power < TURN_MIN_POWER:
+#             power = TURN_MIN_POWER
+#         elif -TURN_MIN_POWER < power < 0:
+#             power = -TURN_MIN_POWER
+# 
+#         # Spin in place: left motor backward, right motor forward → clockwise
+#         LEFT_MOTOR.set_power(-power)
+#         RIGHT_MOTOR.set_power(power)
+# 
+#         prev_error = error
+#         time.sleep(CONTROL_LOOP_INTERVAL)
+# 
+#         # Safety: detect if we're stuck
+#         stall_count += 1
+#         if stall_count > 500:  # ~10 seconds at 50Hz
+#             print("WARNING: turn_to stalled, aborting")
+#             break
+# 
+#     stop_motors()
+#     time.sleep(0.1)  # brief settle time
+#     return True
+
+
+
+
+def turn_until_color(target_heading, target_color):
+    
     prev_error = 0.0
     stall_count = 0
 
     while True:
         if is_estop_pressed():
             stop_motors()
-            return False
+            return "ESTOP"
+
+        # Check for target color
+        tile = classify_tile()
+        if tile == target_color:
+            stop_motors()
+            return "COLOR_DETECTED"
 
         current = get_heading()
         error = target_heading - current
@@ -170,7 +281,9 @@ def turn_to(target_heading):
 
         # Done?
         if abs(error) < TURN_TOLERANCE_DEG:
-            break
+            stop_motors()
+            time.sleep(0.1)
+            return "REACHED_HEADING"
 
         derivative = error - prev_error
         power = TURN_KP * error + TURN_KD * derivative
@@ -184,23 +297,17 @@ def turn_to(target_heading):
         elif -TURN_MIN_POWER < power < 0:
             power = -TURN_MIN_POWER
 
-        # Spin in place: left motor backward, right motor forward → clockwise
         LEFT_MOTOR.set_power(-power)
         RIGHT_MOTOR.set_power(power)
 
         prev_error = error
         time.sleep(CONTROL_LOOP_INTERVAL)
 
-        # Safety: detect if we're stuck
         stall_count += 1
-        if stall_count > 500:  # ~10 seconds at 50Hz
-            print("WARNING: turn_to stalled, aborting")
-            break
-
-    stop_motors()
-    time.sleep(0.1)  # brief settle time
-    return True
-
+        if stall_count > 500:
+            print("WARNING: turn_to_or_color stalled, aborting")
+            stop_motors()
+            return "STALLED"
 
 # ═══════════════════════════════════════════════
 #  WALL FOLLOWING
@@ -281,7 +388,7 @@ def wall_follow_until_color(target_colors):
 #  DRIVE UNTIL COLOR
 # ═══════════════════════════════════════════════
 
-def drive_until_color(heading, target_colors, max_distance_cm=100):
+def drive_until_color(heading, target_colors, direction, max_distance_cm=100):
     """Drive straight until a target color is detected.
 
     Args:
@@ -294,10 +401,13 @@ def drive_until_color(heading, target_colors, max_distance_cm=100):
     reset_encoders()
     prev_error = 0.0
     integral = 0.0
+    
 
     while abs(get_distance_traveled()) < max_distance_cm:
         if is_estop_pressed():
+            
             stop_motors()
+            
             return None
 
         tile = classify_tile()
@@ -312,8 +422,12 @@ def drive_until_color(heading, target_colors, max_distance_cm=100):
         derivative = error - prev_error
         correction = DRIVE_KP * error + DRIVE_KI * integral + DRIVE_KD * derivative
 
-        LEFT_MOTOR.set_power(DRIVE_BASE_SPEED + correction)
-        RIGHT_MOTOR.set_power(DRIVE_BASE_SPEED - correction)
+        if direction == "BACK":
+            LEFT_MOTOR.set_power(-(DRIVE_BASE_SPEED + correction))
+            RIGHT_MOTOR.set_power(-(DRIVE_BASE_SPEED - correction))
+        else:
+            LEFT_MOTOR.set_power(DRIVE_BASE_SPEED - correction)
+            RIGHT_MOTOR.set_power(DRIVE_BASE_SPEED + correction)
 
         prev_error = error
         time.sleep(CONTROL_LOOP_INTERVAL)
@@ -371,3 +485,81 @@ def play_mission_sound():
         _mission_sound.wait_done()
     except Exception as e:
         print(f"Sound error: {e}")
+        
+        
+        
+        
+def sweep(base_heading, sweep_angle=25, forward_speed=15, max_distance_cm=50):
+    
+    
+    reset_encoders()
+    
+    # Sweep targets: right, left, right, left, ...
+    targets = [
+        base_heading + sweep_angle,
+        base_heading - sweep_angle,
+    ]
+    sweep_index = 0
+    current_target = targets[0]
+    
+    prev_error = 0.0
+    
+    while abs(get_distance_traveled()) < max_distance_cm:
+        if is_estop_pressed():
+            
+            stop_motors()
+            return "UNKNOWN"
+        
+        # Check for bed sticker
+        bed = classify_bed()
+        if bed in ("GREEN", "RED"):
+            stop_motors()
+            distance_traveled = abs(get_distance_traveled())
+            return bed, distance_traveled
+        
+        # PID toward current sweep target
+        current = get_heading()
+        error = current_target - current
+        
+        # Normalize to -180..180
+        while error > 180:
+            error -= 360
+        while error < -180:
+            error += 360
+        
+        derivative = error - prev_error
+        turn_correction = TURN_KP * error + TURN_KD * derivative
+        turn_correction = max(min(turn_correction, 25), -25)
+        
+        # Combine: slow forward + turning correction
+        LEFT_MOTOR.set_power(-(forward_speed + turn_correction))
+        RIGHT_MOTOR.set_power(-(forward_speed - turn_correction))
+        
+        # Switch sweep direction when close to target
+        if abs(error) < 5:
+            sweep_index = (sweep_index + 1) % len(targets)
+            current_target = targets[sweep_index]
+        
+        prev_error = error
+        time.sleep(CONTROL_LOOP_INTERVAL)
+    
+    # Reached max distance without finding a bed
+    stop_motors()
+    return "UNKNOWN", abs(get_distance_traveled())
+
+
+if __name__ == "__main__":
+    
+
+
+
+
+    init_sensors()
+
+    reset_encoders()
+    current_heading = get_heading()
+    turn_to(90, "cw")
+    turn_to(270, "cw")
+    
+    stop_all()
+    
